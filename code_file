@@ -1,0 +1,138 @@
+
+from confluent_kafka import Consumer, Producer
+
+from confluent_kafka.admin import AdminClient
+from faker import Faker
+
+
+from dataclasses import dataclass, field
+
+import asyncio
+import json
+import random
+
+faker = Faker()
+
+BROKER_URL = "localhost:9092"
+
+
+@dataclass
+class Purchase:
+    username: str = field(default_factory=faker.user_name)
+    currency: str = field(default_factory=faker.currency_code)
+    amount: int = field(default_factory=lambda: random.randint(100, 200000))
+
+    def serialize(self):
+        return json.dumps({
+            "username": self.username,
+            "currency": self.currency,
+            "amount": self.amount
+        })
+
+    @classmethod
+    def deserialize(cls, json_data):
+
+        
+        purchase_json = json.loads(json_data)
+
+       
+        return cls(
+            username=purchase_json['username'],
+            currency=purchase_json['currency'],
+            amount=purchase_json['amount']
+        )
+
+
+async def produce(topic_name):
+
+    
+    producer = Producer({
+        "bootstrap.servers": BROKER_URL
+    })
+
+    while True:
+
+       
+        purchase = Purchase()
+
+        producer.produce(
+            topic_name,
+            purchase.serialize().encode("utf-8")
+        )
+
+        producer.flush()
+
+        print(f"Produced: {purchase}")
+
+        await asyncio.sleep(1.0)
+
+
+async def consume(topic_name):
+
+    
+    consumer = Consumer({
+        "bootstrap.servers": BROKER_URL,   #bootstrap-servers
+        "group.id": "0",
+        "auto.offset.reset": "earliest"
+    })
+
+    consumer.subscribe([topic_name])
+
+    while True:
+
+        message = consumer.poll(1.0)
+
+        
+        if message is None:
+            print("No message received to the consumer")
+        elif message.error() is not None:
+
+            print(f"Error from consumer: {message.error()}")
+
+        else:
+            try:
+
+                purchase_json = json.loads(
+                    message.value().decode("utf-8")
+                )
+
+         
+                print(
+                    Purchase(
+                        username=purchase_json['username'],
+                        currency=purchase_json['currency'],
+                        amount=purchase_json['amount']
+                    )
+                )
+
+            except KeyError as e:
+                print(f"Error deserializing message: {e}")
+
+        await asyncio.sleep(1.0)
+
+
+async def produce_consume(topic_name):
+
+   
+    t1 = asyncio.create_task(produce(topic_name))
+    t2 = asyncio.create_task(consume(topic_name))
+
+    await t1
+    await t2
+
+
+def main():
+
+    client = AdminClient({
+        "bootstrap.servers": BROKER_URL
+    })
+
+    try:
+        asyncio.run(produce_consume("purchase"))
+
+    except KeyboardInterrupt:
+        print("Stopping consumer")
+
+
+if __name__ == "__main__":
+    main()
